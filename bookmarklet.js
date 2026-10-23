@@ -1,0 +1,46 @@
+// Element Eraser · iOS Safari bookmarklet (touch 版)
+(function () {
+  var K = 'eraser_' + location.hostname, R = [];
+  try { R = JSON.parse(localStorage.getItem(K)) || []; } catch (e) { R = []; }
+
+  function esc(s) { try { return CSS.escape(s); } catch (e) { return String(s).replace(/[^a-zA-Z0-9_-]/g, '\\$&'); } }
+  function uniq(s) { try { return document.querySelectorAll(s).length === 1; } catch (e) { return false; } }
+  function mc(s) { try { return document.querySelectorAll(s).length; } catch (e) { return 9999; } }
+  function stable(c) { if (!c || c.length < 3 || c.length > 40) return false; if (/^\d/.test(c)) return false; if (/[0-9a-f]{8,}/i.test(c)) return false; var d = (c.match(/\d/g) || []).length; if (d >= 2 && d >= c.length * 0.2) return false; return true; }
+  function cls(el) { var o = [], i = 0; for (; i < el.classList.length && o.length < 3; i++) if (stable(el.classList[i])) o.push(el.classList[i]); return o; }
+  function full(el) { var p = [], n = el; while (n && n.nodeType === 1) { var s = n, i = 1; while (s = s.previousElementSibling) i++; p.unshift(n.tagName.toLowerCase() + ':nth-child(' + i + ')'); n = n.parentElement; } return p.join(' > '); }
+  function path(el) { var p = [], n = el; while (n && n.nodeType === 1 && n !== document.body) { if (n.id && uniq('#' + esc(n.id))) { p.unshift('#' + esc(n.id)); break; } var s = n.tagName.toLowerCase(), c = cls(n); s += c.map(function (x) { return '.' + esc(x); }).join(''); var sb = n, i = 1; while (sb = sb.previousElementSibling) if (sb.tagName === n.tagName) i++; s += ':nth-of-type(' + i + ')'; p.unshift(s); n = n.parentElement; } return p.join(' > ') || full(el); }
+  function cands(el) { var C = [], p = function (s) { if (s && C.indexOf(s) < 0) C.push(s); }, st = cls(el); if (st.length) { var t = el.tagName.toLowerCase(), lo = t + st.map(function (x) { return '.' + esc(x); }).join(''); if (mc(lo) <= 20) p(lo); var sb = el, i = 1; while (sb = sb.previousElementSibling) if (sb.tagName === el.tagName) i++; p(lo + ':nth-of-type(' + i + ')'); } if (el.id && stable(el.id) && uniq('#' + esc(el.id))) p('#' + esc(el.id)); p(path(el)); p(full(el)); return C; }
+  function lbl(el) { var t = el.tagName.toLowerCase(); if (el.id) t += '#' + el.id; var x = (el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 16); return t + (x ? '「' + x + '」' : ''); }
+  function apply() { var n = 0; for (var i = 0; i < R.length; i++) { var s = (R[i].selectors || [R[i].selector] || []).filter(Boolean); for (var j = 0; j < s.length; j++) { var els; try { els = document.querySelectorAll(s[j]); } catch (e) { continue; } for (var k = 0; k < els.length; k++) { els[k].style.setProperty('display', 'none', 'important'); els[k].setAttribute('data-ee', R[i].id); n++; } } } return n; }
+  function save(c, l) { R.push({ id: 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), selectors: c, label: l, t: Date.now() }); localStorage.setItem(K, JSON.stringify(R)); apply(); }
+
+  var Z = 2147483647, ov = null, hint = null, cur = null, startXY = null, moved = false, exBtn = null;
+
+  function dOv(el) { var r = el.getBoundingClientRect(); if (!ov) { ov = document.createElement('div'); ov.style.cssText = 'position:fixed;pointer-events:none;z-index:' + (Z - 1) + ';border:2px solid rgba(33,150,243,.9);background:rgba(33,150,243,.16);border-radius:3px;'; document.documentElement.appendChild(ov); } ov.style.left = r.left + 'px'; ov.style.top = r.top + 'px'; ov.style.width = r.width + 'px'; ov.style.height = r.height + 'px'; }
+  function rOv() { if (ov && ov.parentNode) ov.parentNode.removeChild(ov); ov = null; }
+  function sh(t) { rH(); hint = document.createElement('div'); hint.style.cssText = 'position:fixed;left:8px;top:8px;z-index:' + Z + ';background:#323232;color:#fff;padding:8px 12px;border-radius:18px;font:13px/1.4 system-ui;box-shadow:0 2px 10px rgba(0,0,0,.3);max-width:90%'; hint.textContent = t; document.documentElement.appendChild(hint); }
+  function uH(t) { if (hint) hint.textContent = t; }
+  function rH() { if (hint && hint.parentNode) hint.parentNode.removeChild(hint); hint = null; }
+  function mk(t, c) { var b = document.createElement('button'); b.type = 'button'; b.textContent = t; b.style.cssText = 'border:1px solid ' + c + ';background:' + c + ';color:#fff;padding:9px 16px;border-radius:9px;font:15px system-ui;'; return b; }
+  function cfm(el) { rC(); var c = cands(el); var bar = document.createElement('div'); bar.id = '__ee_cf'; bar.style.cssText = 'position:fixed;z-index:' + Z + ';display:flex;gap:8px;align-items:center;background:#fff;border:1px solid #ddd;border-radius:12px;padding:10px;box-shadow:0 4px 16px rgba(0,0,0,.25);font:15px/1.4 system-ui;max-width:92%'; var lb = document.createElement('span'); lb.textContent = lbl(el); lb.style.cssText = 'color:#333;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'; lb.title = '候选:\n' + c.join('\n'); var bH = mk('隐藏', '#1e88e5'), bP = mk('选父级', '#757575'), bC = mk('取消', '#bdbdbd'); bH.onclick = function (e) { e.preventDefault(); e.stopPropagation(); rC(); save(c, lbl(el)); uH('已隐藏，共 ' + R.length + ' 条 · 继续点别的，或右上角退出'); }; bP.onclick = function (e) { e.preventDefault(); e.stopPropagation(); var p = el.parentElement; if (p && p.nodeType === 1) { cur = p; dOv(p); cfm(p); } }; bC.onclick = function (e) { e.preventDefault(); e.stopPropagation(); rC(); }; bar.appendChild(lb); bar.appendChild(bH); bar.appendChild(bP); bar.appendChild(bC); document.documentElement.appendChild(bar); var r = el.getBoundingClientRect(); bar.style.left = Math.min(Math.max(8, r.left), innerWidth - 320) + 'px'; bar.style.top = (r.bottom + 8 + 70 > innerHeight ? Math.max(8, r.top - 70) : r.bottom + 8) + 'px'; }
+  function rC() { var b = document.getElementById('__ee_cf'); if (b && b.parentNode) b.parentNode.removeChild(b); }
+
+  function onUI(t) { return !!(t && t.closest && (t.closest('#__ee_cf') || t === exBtn)); }
+  function ev(x, y) { var el = null; try { el = document.elementFromPoint(x, y); } catch (e) { return null; } return el; }
+  function ts(e) { if (onUI(e.target)) return; var t = e.touches[0]; startXY = { x: t.clientX, y: t.clientY }; moved = false; var el = ev(t.clientX, t.clientY); if (el && el !== ov) { cur = el; dOv(el); } }
+  function tm(e) { if (onUI(e.target)) return; var t = e.touches[0]; if (Math.abs(t.clientX - startXY.x) > 10 || Math.abs(t.clientY - startXY.y) > 10) moved = true; e.preventDefault(); var el = ev(t.clientX, t.clientY); if (el && el !== ov) { cur = el; dOv(el); } }
+  function te(e) { if (onUI(e.target)) return; if (moved) return; e.preventDefault(); if (cur) cfm(cur); }
+
+  function stop() { document.removeEventListener('touchstart', ts, { capture: true }); document.removeEventListener('touchmove', tm, { capture: true }); document.removeEventListener('touchend', te, { capture: true }); rOv(); rH(); rC(); if (exBtn && exBtn.parentNode) exBtn.parentNode.removeChild(exBtn); }
+
+  apply();
+  exBtn = mk('✕ 退出', '#e53935');
+  exBtn.style.cssText = 'position:fixed;right:8px;top:8px;z-index:' + Z + ';background:#e53935;color:#fff;border:none;border-radius:18px;padding:9px 14px;font:14px system-ui;';
+  exBtn.onclick = function () { stop(); };
+  document.documentElement.appendChild(exBtn);
+  document.addEventListener('touchstart', ts, { capture: true, passive: false });
+  document.addEventListener('touchmove', tm, { capture: true, passive: false });
+  document.addEventListener('touchend', te, { capture: true, passive: false });
+  sh('已套用 ' + R.length + ' 条 · 点广告即隐藏 · 「选父级」换上层 · 右上角退出');
+})();
