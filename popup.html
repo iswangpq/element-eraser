@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>网页元素消除器</title>
+<style>
+  body { width: 320px; margin: 0; padding: 12px; color: #333; background: #fff;
+         font: 13px/1.5 system-ui, "Microsoft YaHei", sans-serif; }
+  h1 { font-size: 15px; margin: 0 0 8px; }
+  .site { color: #666; font-size: 12px; margin-bottom: 10px; word-break: break-all; }
+  button { cursor: pointer; border: none; border-radius: 6px; padding: 7px 12px; font-size: 13px; }
+  #pickBtn { width: 100%; background: #1e88e5; color: #fff; font-weight: 600; }
+  #pickBtn.picking { background: #ffb300; }
+  .tools { display: flex; gap: 6px; margin-top: 8px; }
+  .tools button { flex: 1; background: #f5f5f5; color: #444; border: 1px solid #ddd;
+                  font-size: 12px; padding: 5px 4px; }
+  .settings { display: flex; align-items: center; gap: 8px; margin-top: 8px;
+              font-size: 12px; color: #666; }
+  .settings select { flex: 1; font-size: 12px; padding: 3px; border: 1px solid #ddd;
+                     border-radius: 4px; background: #fff; color: #333; }
+  .rules { margin-top: 12px; border-top: 1px solid #eee; padding-top: 8px; }
+  .rules .head { display: flex; justify-content: space-between; align-items: center;
+                 margin-bottom: 6px; font-size: 12px; color: #888; }
+  .rule { display: flex; align-items: center; gap: 6px; padding: 6px;
+          background: #fafafa; border: 1px solid #eee; border-radius: 6px; margin-bottom: 6px; }
+  .rule.stale { background: #fff8e1; border-color: #ffe082; }
+  .rule .txt { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+  .rule .txt .tag { font-size: 11px; color: #b26a00; }
+  .rule .loc { background: #fff; border: 1px solid #1e88e5; color: #1e88e5;
+               padding: 3px 8px; font-size: 12px; border-radius: 4px; }
+  .rule .del { background: #fff; border: 1px solid #e53935; color: #e53935;
+               padding: 3px 8px; font-size: 12px; border-radius: 4px; }
+  .empty { color: #aaa; font-size: 12px; text-align: center; padding: 8px 0; }
+  .clear { background: none; color: #888; font-size: 12px; text-decoration: underline; padding: 2px 4px; }
+  .tip { margin-top: 8px; font-size: 11px; color: #aaa; }
+
+  @media (prefers-color-scheme: dark) {
+    body { background: #1e1f22; color: #e6e6e6; }
+    h1 { color: #fff; }
+    .site { color: #9aa0a6; }
+    #pickBtn { background: #2196f3; }
+    .tools button { background: #2b2d30; color: #cfcfcf; border-color: #3a3d41; }
+    .settings { color: #9aa0a6; }
+    .settings select { background: #2b2d30; color: #e6e6e6; border-color: #3a3d41; }
+    .rules { border-top-color: #3a3d41; }
+    .rule { background: #2b2d30; border-color: #3a3d41; }
+    .rule.stale { background: #3a3123; border-color: #6b5c22; }
+    .rule .txt .tag { color: #d9a422; }
+    .rule .loc { background: #1e1f22; border-color: #2196f3; color: #64b5f6; }
+    .rule .del { background: #1e1f22; border-color: #e57373; color: #e57373; }
+    .empty { color: #777; }
+    .tip { color: #777; }
+  }
+</style>
+</head>
+<body>
+  <h1>网页元素消除器</h1>
+  <div class="site" id="site">检测中…</div>
+  <button id="pickBtn">开始选择要隐藏的元素</button>
+  <div class="tools">
+    <button id="undoBtn">撤销上一条</button>
+    <button id="exportBtn">导出规则</button>
+    <button id="importBtn">导入规则</button>
+    <input type="file" id="importFile" accept=".json,application/json" style="display:none">
+  </div>
+  <div class="settings">
+    <span>隐藏方式</span>
+    <select id="hideMode">
+      <option value="display">移除占位（推荐）</option>
+      <option value="visibility">保留占位</option>
+    </select>
+  </div>
+  <div class="rules">
+    <div class="head">
+      <span id="ruleCount">已保存规则</span>
+      <button class="clear" id="clearBtn">全部恢复</button>
+    </div>
+    <div id="ruleList"></div>
+  </div>
+  <div class="tip">规则按网站分别保存，仅存本地浏览器。Ctrl+Z 撤销最近隐藏；Ctrl+Shift+Y 快捷开始；对元素右键可直接隐藏。</div>
+  <script src="popup.js"></script>
+</body>
+</html>
