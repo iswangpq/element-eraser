@@ -16,6 +16,7 @@
   var HIGHLIGHT_ID = '__eraser_highlight__';
   var HINT_ID = '__eraser_hint__';
   var CONFIRM_ID = '__eraser_confirm__';
+  var INFO_ID = '__eraser_info__';
   var MAX_Z = 2147483647;
 
   var IN_FRAME = (function () {
@@ -53,10 +54,13 @@
   var observer = null;
   var applyTimer = null;
   var matchedIds = {};   // 最近一次 applyRules 命中过的规则 id
+  var hitCounts = {};    // 最近一次 applyRules 每条规则命中的元素数
   var readyAt = Date.now();
   var lastHiddenAt = 0;  // 最近一次手动隐藏时间（用于 Ctrl+Z 宽限期）
   var lastContextTarget = null; // 右键菜单快速隐藏用
   var lastContextAt = 0;
+  var currentRaw = null;  // 鼠标下的原始元素（用于判断是否换了目标）
+  var infoEl = null;      // 元素信息卡
 
   /* ---------------- 存储 ---------------- */
 
@@ -136,20 +140,27 @@
   function applyRules() {
     var n = 0;
     matchedIds = {};
+    hitCounts = {};
     var roots = collectRoots();
     for (var i = 0; i < rules.length; i++) {
       var sels = ruleSelectors(rules[i]);
       var hit = false;
+      var seen = [];
       for (var s = 0; s < sels.length; s++) {
         var els = deepQueryAll(sels[s], roots);
         for (var j = 0; j < els.length; j++) {
-          if (els[j].getAttribute('data-eraser-hidden') === rules[i].id) { hit = true; continue; }
-          hideEl(els[j], rules[i].id);
+          var el = els[j];
+          // 作用域不符 → 不是这条规则要藏的东西（如评论区里同 class 的图片）
+          if (rules[i].scope && !matchesScope(el, rules[i].scope)) continue;
+          if (seen.indexOf(el) === -1) seen.push(el);
+          if (el.getAttribute('data-eraser-hidden') === rules[i].id) { hit = true; continue; }
+          hideEl(el, rules[i].id);
           hit = true;
           n++;
         }
       }
       if (hit) matchedIds[rules[i].id] = true;
+      hitCounts[rules[i].id] = seen.length;
     }
     return n;
   }
@@ -316,6 +327,134 @@
     return t + (txt ? '「' + txt + '」' : '');
   }
 
+  /* ---------------- 精准化：目标提升 / 作用域指纹 / 风险评估 ---------------- */
+
+  // 常见广告语义（用于把"图片/文字"上提成真正的广告块）
+  var AD_HINT = /(ad|ads|advert|advertisement|sponsor|sponsorize|promotion|promote|banner|creative|commercial|recommend|推广|广告)/i;
+  // 纯内容元素：本身不该作为隐藏目标（其 class 常常与别处共用）
+  var CONTENT_TAGS = {
+    IMG: 1, SVG: 1, SPAN: 1, P: 1, I: 1, EM: 1, STRONG: 1, B: 1, TIME: 1,
+    BR: 1, PATH: 1, G: 1, USE: 1, LABEL: 1, SMALL: 1, CITE: 1, Q: 1, A: 0
+  };
+
+  function hasAdHint(el) {
+    if (!el) return false;
+    var cls = (typeof el.className === 'string') ? el.className : '';
+    var s = cls + ' ' + (el.id || '') + ' ' +
+            (el.getAttribute('data-ad') || '') + ' ' + (el.getAttribute('aria-label') || '');
+    return AD_HINT.test(s);
+  }
+
+  function hasRole(el) {
+    if (!el || !el.getAttribute) return false;
+    var r = el.getAttribute('role');
+    return r === 'button' || r === 'link' || r === 'banner';
+  }
+
+  /** 目标体量评估（面积占比 / 文本量 / 子元素数） */
+  function assess(el) {
+    if (!el || el.nodeType !== 1) return { ratio: 0, textLen: 0, kids: 0, risky: false, rect: null };
+    var r = el.getBoundingClientRect();
+    var vw = window.innerWidth || 1200, vh = window.innerHeight || 800;
+    var ratio = (r.width * r.height) / (vw * vh);
+    var text = (el.textContent || '').replace(/\s+/g, ' ').trim();
+    var kids = el.children.length;
+    return {
+      ratio: ratio,
+      textLen: text.length,
+      kids: kids,
+      rect: r,
+      risky: ratio > 0.3 || text.length > 800 || kids > 80
+    };
+  }
+
+  /** 是否适合作为"隐藏目标"：不能太大、不能含大量正文 */
+  function suitableTarget(el) {
+    if (!el || el.nodeType !== 1) return false;
+    var a = assess(el);
+    if (a.ratio > 0.4 || a.textLen > 900 || a.kids > 200) return false;
+    var tag = el.tagName;
+    if (tag === 'A' || hasAdHint(el) || hasRole(el)) return true;
+    return !CONTENT_TAGS[tag];
+  }
+
+  function sizesSimilar(a, b) {
+    if (!a || !b) return false;
+    var ra = a.getBoundingClientRect(), rb = b.getBoundingClientRect();
+    return ra.width <= rb.width * 1.6 && ra.height <= rb.height * 1.6;
+  }
+
+  /**
+   * 智能目标提升：点到图片/文字时自动上移到真正的广告容器。
+   * 这是"关广告把评论区一起带走"的根治点——原来存的是最内层 img 的 class，
+   * 而这类 class 常常和评论区头像共用，规则一匹配就把评论区的图也藏了。
+   */
+  function pickTarget(el) {
+    if (!el || el.nodeType !== 1) return el;
+    var cur = el, hops = 0;
+    while (cur && cur.nodeType === 1 && hops < 5) {
+      if (suitableTarget(cur)) return cur;
+      var p = cur.parentElement;
+      if (p && p.nodeType === 1 && sizesSimilar(p, cur) && suitableTarget(p)) return p;
+      cur = p;
+      hops++;
+    }
+    return el;
+  }
+
+  /** 祖先链（用于信息卡展示） */
+  function ancestorChain(el) {
+    var parts = [], node = el.parentElement, depth = 0;
+    while (node && node.nodeType === 1 && node !== document.body && depth < 3) {
+      var cls = classesOf(node);
+      var seg = node.tagName.toLowerCase();
+      if (cls.length) seg += '.' + cls[0];
+      parts.unshift(seg);
+      depth++;
+      node = node.parentElement;
+    }
+    return parts.join(' > ');
+  }
+
+  /**
+   * 作用域指纹：记录目标的祖先链（稳定 class）。
+   * 规则匹配时若祖先链不符则跳过 —— 同 class 不同区域不再互相误伤。
+   */
+  function buildScope(el) {
+    var parts = [], node = el.parentElement, depth = 0;
+    while (node && node.nodeType === 1 && node !== document.body && depth < 3) {
+      var cls = classesOf(node);
+      if (cls.length) {
+        parts.unshift(node.tagName.toLowerCase() + '.' + CSS.escape(cls[0]));
+        depth++;
+      }
+      node = node.parentElement;
+    }
+    return parts.join(' > ');
+  }
+
+  function matchesSimple(el, part) {
+    var m = /^([a-z0-9-]+)?(?:\.([^\s>.]+))?$/i.exec(part);
+    if (!m) return false;
+    if (m[1] && el.tagName.toLowerCase() !== m[1].toLowerCase()) return false;
+    if (m[2]) {
+      try { if (!el.matches(part)) return false; } catch (e) { return false; }
+    }
+    return true;
+  }
+
+  /** 宽松的祖先链匹配：允许中间隔着没有稳定 class 的节点 */
+  function matchesScope(el, scope) {
+    if (!scope) return true;
+    var parts = scope.split(' > ');
+    var node = el.parentElement, i = 0;
+    while (node && node.nodeType === 1) {
+      if (i < parts.length && matchesSimple(node, parts[i])) i++;
+      node = node.parentElement;
+    }
+    return i >= parts.length;
+  }
+
   /* ---------------- 隐藏动画（EFFECTS.hide.style 可切换风格） ---------------- */
 
   function collapseHide(el, done) {
@@ -453,36 +592,85 @@
     picking = true;
     confirmOpen = false;
     current = null;
+    currentRaw = null;
     document.addEventListener('mousemove', onMove, true);
-    document.addEventListener('click', onClick, true);
     document.addEventListener('keydown', onKey, true);
     document.addEventListener('wheel', onWheel, { capture: true, passive: false });
     document.addEventListener('scroll', onScroll, true);
+    // 导航阻断：在 window 捕获阶段拦截，先于页面任何脚本执行，
+    // 防止广告在 mousedown / window 捕获监听器里直接跳转
+    window.addEventListener('click', onPickClick, true);
+    window.addEventListener('mousedown', blockNav, true);
+    window.addEventListener('mouseup', blockNav, true);
+    window.addEventListener('auxclick', blockNav, true);
+    window.addEventListener('dblclick', blockNav, true);
+    window.addEventListener('touchstart', blockNav, true);
+    window.addEventListener('touchend', blockNav, true);
     showHint('点击要隐藏的元素 · Alt+滚轮=选父级 · ESC 退出 · Ctrl+Z 撤销');
   }
 
   function stopPick() {
     picking = false;
     document.removeEventListener('mousemove', onMove, true);
-    document.removeEventListener('click', onClick, true);
     document.removeEventListener('keydown', onKey, true);
     document.removeEventListener('wheel', onWheel, { capture: true });
     document.removeEventListener('scroll', onScroll, true);
+    window.removeEventListener('click', onPickClick, true);
+    window.removeEventListener('mousedown', blockNav, true);
+    window.removeEventListener('mouseup', blockNav, true);
+    window.removeEventListener('auxclick', blockNav, true);
+    window.removeEventListener('dblclick', blockNav, true);
+    window.removeEventListener('touchstart', blockNav, true);
+    window.removeEventListener('touchend', blockNav, true);
     removeOverlay();
     removeHint();
     removeConfirm();
+    removeInfo();
     current = null;
+    currentRaw = null;
+  }
+
+  /** 阻断页面级跳转/打开新标签（放行我们自己的 UI） */
+  function blockNav(e) {
+    if (!picking) return;
+    var t = e.target;
+    if (t && t.closest && (t.closest('#' + CONFIRM_ID) || t.closest('#' + HINT_ID) || t.closest('#' + INFO_ID))) return;
+    e.stopPropagation();
+    if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+    // touch 不 preventDefault，否则移动端会连 click 一起吞掉
+    if (e.type !== 'touchstart' && e.type !== 'touchend') e.preventDefault();
+  }
+
+  /** 点选确认：同样放在 window 捕获阶段，页面脚本拿不到这次点击 */
+  function onPickClick(e) {
+    if (!picking) return;
+    var t = e.target;
+    if (t && t.closest && (t.closest('#' + CONFIRM_ID) || t.closest('#' + HINT_ID) || t.closest('#' + INFO_ID))) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+    var raw = deepElementFromPoint(e.clientX, e.clientY);
+    var target = pickTarget(raw || current);
+    if (!target) return;
+    current = target;
+    drawOverlay(target);
+    fadeOverlayIn();
+    showConfirm(target);
   }
 
   function onMove(e) {
     if (!picking) return;
-    var el = deepElementFromPoint(e.clientX, e.clientY);
-    if (!el || el === overlay) return;
-    if (el.closest && el.closest('#' + CONFIRM_ID)) return;
-    if (el !== current) {
-      current = el;
-      drawOverlay(el);
+    var raw = deepElementFromPoint(e.clientX, e.clientY);
+    if (!raw || raw === overlay) return;
+    if (raw.closest && raw.closest('#' + CONFIRM_ID)) return;
+    if (raw !== currentRaw) {
+      currentRaw = raw;
+      // 智能提升：点到图片/文字时上移到真正的广告容器，避免存下会误伤别处的 class
+      var target = pickTarget(raw);
+      current = target;
+      drawOverlay(target);
       fadeOverlayIn();
+      showInfo(target);
     }
   }
 
@@ -501,15 +689,6 @@
       fadeOverlayIn();
       if (confirmOpen) showConfirm(p);
     }
-  }
-
-  function onClick(e) {
-    if (!picking) return;
-    if (e.target.closest && e.target.closest('#' + CONFIRM_ID)) return;
-    e.preventDefault();
-    e.stopPropagation();
-    if (!current) return;
-    showConfirm(current);
   }
 
   function onKey(e) {
@@ -633,6 +812,43 @@
 
   function updateHint(text) { if (hintEl) hintEl.textContent = text; }
 
+  /* ---------------- 元素信息卡（点之前就知道会藏什么） ---------------- */
+
+  function showInfo(el) {
+    if (!infoEl) {
+      infoEl = document.createElement('div');
+      infoEl.id = INFO_ID;
+      infoEl.style.cssText =
+        'position:fixed;z-index:' + (MAX_Z - 2) + ';pointer-events:none;' +
+        'background:rgba(30,32,36,.94);color:#e8eaed;border-radius:6px;padding:6px 9px;' +
+        'font:11px/1.5 ui-monospace,Consolas,"Microsoft YaHei",monospace;' +
+        'white-space:pre;max-width:340px;box-shadow:0 2px 10px rgba(0,0,0,.35);';
+      document.documentElement.appendChild(infoEl);
+    }
+    var a = assess(el);
+    var cands = buildCandidates(el);
+    var hit = 0;
+    try { hit = matchCount(cands[0] || ''); } catch (e) { hit = 0; }
+    var cls = (typeof el.className === 'string') ? el.className.trim().split(/\s+/).slice(0, 3) : [];
+    var lines = [];
+    lines.push(el.tagName.toLowerCase() + (cls.length ? '.' + cls.join('.') : ''));
+    lines.push('祖先: ' + (ancestorChain(el) || '(无)'));
+    lines.push('本页命中 ' + hit + ' 个 · 面积 ' + Math.round(a.ratio * 100) + '% · 文本 ' + a.textLen + ' 字');
+    if (a.risky) lines.push('⚠ 目标偏大或含正文，直接隐藏容易误伤');
+    infoEl.textContent = lines.join('\n');
+
+    var r = a.rect;
+    var top = r.bottom + 8;
+    if (top + 76 > window.innerHeight) top = Math.max(8, r.top - 76);
+    infoEl.style.left = Math.min(Math.max(8, r.left), window.innerWidth - 350) + 'px';
+    infoEl.style.top = top + 'px';
+  }
+
+  function removeInfo() {
+    if (infoEl && infoEl.parentNode) infoEl.parentNode.removeChild(infoEl);
+    infoEl = null;
+  }
+
   function removeHint() {
     if (hintEl && hintEl.parentNode) hintEl.parentNode.removeChild(hintEl);
     hintEl = null;
@@ -652,6 +868,9 @@
     removeConfirm();
     confirmOpen = true;
     var cands = buildCandidates(el);
+    var scope = buildScope(el);
+    var a = assess(el);
+    var risky = a.risky;
     var bar = document.createElement('div');
     bar.id = CONFIRM_ID;
     var fs = IN_FRAME ? 12 : 13;
@@ -675,16 +894,31 @@
     var label = document.createElement('span');
     label.style.cssText = 'color:#333;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:150px;';
     label.textContent = labelOf(el);
-    label.title = '候选选择器：\n' + cands.join('\n');
+    label.title = '候选选择器：\n' + cands.join('\n') + (scope ? '\n作用域：' + scope : '');
 
     var btnHide = mkBtn('隐藏此元素', '#1e88e5');
     var btnParent = mkBtn('选父级', '#757575');
     var btnCancel = mkBtn('取消', '#bdbdbd');
+    var armed = false;
+    var warnEl = null;
 
     btnHide.addEventListener('click', function (ev) {
       ev.stopPropagation();
+      // 目标偏大 / 含大量正文时，先警告再放行，避免误伤整块内容
+      if (risky && !armed) {
+        armed = true;
+        btnHide.textContent = '仍要隐藏';
+        btnHide.style.background = '#e53935';
+        btnHide.style.borderColor = '#e53935';
+        if (warnEl) {
+          warnEl.style.color = '#e53935';
+          warnEl.textContent = '⚠ 该目标占页面 ' + Math.round(a.ratio * 100) + '%、含 ' + a.textLen +
+            ' 字正文，隐藏可能误伤。再点一次「仍要隐藏」确认，或点「选父级」重新定位。';
+        }
+        return;
+      }
       removeConfirm();
-      hideAndSave(el, cands);
+      hideAndSave(el, cands, scope);
     });
     btnParent.addEventListener('click', function (ev) {
       ev.stopPropagation();
@@ -707,7 +941,12 @@
     row1.appendChild(btnCancel);
     bar.appendChild(row1);
 
-    if (tipText) {
+    if (risky) {
+      warnEl = document.createElement('div');
+      warnEl.style.cssText = 'color:#e53935;font-size:' + (fs - 1) + 'px;';
+      warnEl.textContent = '⚠ 目标偏大或含大量正文，直接隐藏容易误伤（例如把整块评论区一起藏掉）。';
+      bar.appendChild(warnEl);
+    } else if (tipText) {
       var tip = document.createElement('div');
       tip.style.cssText = 'color:#b26a00;font-size:' + (fs - 1) + 'px;';
       tip.textContent = '💡 ' + tipText;
@@ -734,7 +973,7 @@
     return s[0] || '';
   }
 
-  function hideAndSave(el, cands) {
+  function hideAndSave(el, cands, scope) {
     var primary = cands[0] || '';
     for (var i = 0; i < rules.length; i++) {
       if (primaryOf(rules[i]) === primary) {
@@ -747,6 +986,7 @@
       var rule = {
         id: 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
         selectors: cands,
+        scope: scope || '',          // 祖先作用域，避免同 class 不同区域互相误伤
         label: labelOf(el),
         createdAt: Date.now()
       };
@@ -754,7 +994,8 @@
       lastHiddenAt = Date.now();
       persist(function () {
         applyRules();
-        updateHint('已隐藏，共 ' + rules.length + ' 条 · Ctrl+Z 撤销 · ESC 退出');
+        var hits = hitCounts[rule.id] || 0;
+        updateHint('已隐藏 ' + hits + ' 个元素 · 共 ' + rules.length + ' 条规则 · Ctrl+Z 撤销');
       });
     });
   }
@@ -769,8 +1010,10 @@
       out.push({
         id: r.id,
         selectors: ruleSelectors(r),
+        scope: r.scope || '',
         label: r.label,
         createdAt: r.createdAt,
+        hits: hitCounts[r.id] || 0,
         alive: grace ? true : !!matchedIds[r.id]
       });
     }
@@ -840,7 +1083,7 @@
         try { connected = t.isConnected !== false; } catch (e) { /* 忽略 */ }
         if (connected && t.nodeType === 1) {
           if (picking) stopPick();
-          hideAndSave(t, buildCandidates(t));
+          hideAndSave(t, buildCandidates(t), buildScope(t));
         }
       }
       sendResponse(state());

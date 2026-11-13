@@ -64,6 +64,13 @@
         tag.textContent = ' ⚠ 疑似失效';
         txt.appendChild(tag);
       }
+      if (typeof r.hits === 'number' && r.hits > 0) {
+        var hitTag = document.createElement('span');
+        hitTag.className = 'tag';
+        hitTag.style.color = '#2e7d32';
+        hitTag.textContent = ' 命中' + r.hits;
+        txt.appendChild(hitTag);
+      }
 
       var loc = document.createElement('button');
       loc.className = 'loc';
