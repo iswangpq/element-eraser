@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>广告测试页 - 网页元素消除器</title>
+<style>
+  body { font-family: system-ui, "Microsoft YaHei", sans-serif; margin: 0; background: #f5f6f8; color: #333; }
+  .tip { background: #fff8e1; border-bottom: 1px solid #ffe082; padding: 10px 16px; font-size: 13px; }
+  header { background: #d32f2f; color: #fff; padding: 14px 20px; font-size: 20px; font-weight: 600; }
+  .wrap { display: flex; gap: 16px; max-width: 1000px; margin: 16px auto; padding: 0 16px; }
+  main { flex: 1; }
+  article { background: #fff; border-radius: 8px; padding: 20px; }
+  article h2 { margin-top: 0; }
+  article p { line-height: 1.8; color: #555; }
+  .ad { border: 2px dashed #e53935; background: linear-gradient(135deg, #ffebee, #fff3e0);
+        border-radius: 8px; display: flex; align-items: center; justify-content: center;
+        color: #b71c1c; font-weight: 700; position: relative; }
+  .ad::after { content: "AD"; position: absolute; top: 4px; right: 6px; font-size: 10px; color: #fff;
+               background: #e53935; padding: 1px 5px; border-radius: 3px; }
+  .ad-top { height: 90px; margin: 16px auto 0; max-width: 1000px; }
+  .ad-inline { height: 120px; margin: 18px 0; }
+  .ad-float { position: fixed; right: 16px; bottom: 16px; width: 240px; height: 100px; z-index: 999; }
+  aside { width: 260px; display: flex; flex-direction: column; gap: 16px; }
+  .ad-side { height: 180px; }
+  .controls { max-width: 1000px; margin: 0 auto 24px; padding: 0 16px; }
+  .controls button { background: #1976d2; color: #fff; border: none; padding: 8px 16px;
+                     border-radius: 6px; cursor: pointer; font-size: 14px; }
+  .log { font-size: 12px; color: #888; margin-top: 8px; }
+</style>
+</head>
+<body>
+  <div class="tip">测试说明：安装扩展后，点击工具栏图标 → 开始选择 → 点击本页任一红色广告框 → 隐藏此元素。然后按 F5 刷新，广告应保持隐藏。</div>
+  <header>某某新闻网（测试页）</header>
+  <div class="ad ad-top">顶部横幅广告 728x90</div>
+  <div class="wrap">
+    <main>
+      <article>
+        <h2>这是一篇正常的文章标题</h2>
+        <p>这里是正文内容，正常内容不应该被误隐藏。可以试试只点选红色的广告框。</p>
+        <div class="ad ad-inline">信息流广告</div>
+        <p>更多正文内容，用于验证扩展不会误伤页面内容。</p>
+      </article>
+    </main>
+    <aside>
+      <div class="ad ad-side">侧边栏广告</div>
+      <div class="ad ad-side">推荐广告</div>
+    </aside>
+  </div>
+  <div class="ad ad-float">悬浮广告</div>
+  <div class="controls">
+    <button id="dynBtn">模拟动态广告（每 2 秒插入一个新广告）</button>
+    <div class="log" id="log"></div>
+  </div>
+  <script>
+    var n = 0;
+    document.getElementById('dynBtn').onclick = function () {
+      var t = setInterval(function () {
+        n++;
+        var d = document.createElement('div');
+        d.className = 'ad ad-inline';
+        d.textContent = '动态插入的广告 #' + n;
+        document.querySelector('article').appendChild(d);
+        document.getElementById('log').textContent = '已插入 ' + n + ' 个动态广告（隐藏规则对它们同样生效）';
+        if (n >= 5) clearInterval(t);
+      }, 2000);
+    };
+  </script>
+</body>
+</html>

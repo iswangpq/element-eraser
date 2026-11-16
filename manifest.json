@@ -1,0 +1,33 @@
+{
+  "manifest_version": 3,
+  "name": "网页元素消除器 Element Eraser",
+  "version": "1.0.0",
+  "description": "点选网页元素即可隐藏（向上折叠动画，可换风格），规则按站点本地保存、刷新自动生效；支持撤销、导入导出、快捷键与右键快速隐藏。",
+  "permissions": ["storage", "contextMenus"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "commands": {
+    "toggle-pick": {
+      "suggested_key": { "default": "Ctrl+Shift+Y" },
+      "description": "开始/停止选择要隐藏的元素"
+    }
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "网页元素消除器"
+  },
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*", "file:///*"],
+      "js": ["content.js"],
+      "run_at": "document_idle",
+      "all_frames": true
+    }
+  ],
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  }
+}
